@@ -733,7 +733,6 @@ String readURL(String getAnswer) {
 
       if(cmd == "clearLigthTime") {
         printDebugln("Reset Heure allumage de " + String(EEPROM_POSITION_LIGHT_TIME) + " à " + String(7*ON*LIGHT_TIME_STRUCT_LENGTH*2),DEBUG);
-        
         jsonAnswer = clearROM(EEPROM_POSITION_LIGHT_TIME, 7*ON*LIGHT_TIME_STRUCT_LENGTH*2);
       }
 
