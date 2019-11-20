@@ -9,7 +9,7 @@
 #define EEPROM_POSITION_RELAIS_STATUS_3 3
 #define EEPROM_POSITION_RELAIS_STATUS_4 4
 #define EEPROM_POSITION_DEBUG_MODE 5
-#define EEPROM_POSITION_toDefine_2 6
+#define EEPROM_POSITION_LAST_LIGHT_POWER 6
 #define EEPROM_POSITION_toDefine_3 7
 #define EEPROM_POSITION_toDefine_4 8
 #define EEPROM_POSITION_toDefine_5 9
@@ -90,7 +90,30 @@
 #define ERROR 3
 #define FORCE 4
 
+// Boutons
+#define BT_PRESS 35
+#define BT_AUTO_LIGHT 34
+#define BT_LED_ONOFF 33
 
+//LED
+#define LED_ALARM_PH_HIGH 36
+#define LED_WARN_PH_HIGH 37
+#define LED_OK 38
+#define LED_WARN_PH_LOW 39
+#define LED_ALARM_PH_LOW 40
+#define LED_GH_OK 41
+#define LED_GH_WARN 42
+#define LED_GH_ALARM 43
+
+
+// Niveau constante aquarium
+#define GH_WARN_THRESHOLD 16
+#define GH_ALERT_THRESHOLD 22
+
+#define PH_ALERT_HIGH_THRESHOLD 8.5
+#define PH_WARN_HIGH_THRESHOLD 8
+#define PH_WARN_LOW_THRESHOLD 6
+#define PH_ALERT_LOW_THRESHOLD 5.5
 
 
 /////////////////////////////////////////////////////////
@@ -183,6 +206,11 @@ int RELAIS_PIN_3_status = RELAIS_OFF;
 int RELAIS_PIN_4_status = RELAIS_OFF;
 
 
+// Etat des boutons
+int buttonAutoLight = 0;
+int buttonLedOnOff = 0;
+
+
 
 /////////////////////////////////////////////////////////
 // Déclaration des fonctions
@@ -190,12 +218,22 @@ int RELAIS_PIN_4_status = RELAIS_OFF;
 
 void printDebug(String message, int level=1);
 void printDebugln(String message, int level=1);
-void setTimerNTP ();
+void setTimerNTP (); 
 int readValROM(int address);
 void replyJson(EthernetClient client, String message);
 String print2digits(int number);
 int getMedianNum(int bArray[], int iFilterLen);
 String clearROM(int startAddress, int stopAddress);
+void initPins() ;
+void initSDCard();
+void setPins();
+void getTemperature();
+void getGH();
+void getDistance();
+void getPH();
+void getTime();
+void listenClient();
+void getLightConsigne();
 
 /////////////////////////////////////////////////////////
 // Configuration du programme
@@ -271,6 +309,8 @@ void setup()
   RELAIS_PIN_4_status = readValROM(EEPROM_POSITION_RELAIS_STATUS_4);
 
 
+  // Initialisation des boutons
+  initButtonsLed();
   // Execution de la configuration des pins
   setPins();
 
@@ -301,6 +341,12 @@ void loop()
   // Récupération de 'heure
   getTime();
 
+  // affiche l'etat de l'eau
+  displayWaterState();
+
+  // etat boutons
+  getButtonState();
+
   // ecoute du client web
   listenClient();
   
@@ -314,6 +360,170 @@ void loop()
   
 } 
 // Fin loop()
+
+
+/////////////////////////////////////////////////////////
+// Initialisation des boutons
+/////////////////////////////////////////////////////////
+void initButtonsLed() {
+  
+  pinMode(LED_ALARM_PH_HIGH, OUTPUT);
+  pinMode(LED_WARN_PH_HIGH, OUTPUT);
+  pinMode(LED_OK, OUTPUT);
+  pinMode(LED_WARN_PH_LOW, OUTPUT);
+  pinMode(LED_ALARM_PH_LOW, OUTPUT);
+  pinMode(LED_GH_OK, OUTPUT);
+  pinMode(LED_GH_WARN, OUTPUT);
+  pinMode(LED_GH_ALARM, OUTPUT);
+
+  ledOff(LED_ALARM_PH_HIGH);
+  ledOff(LED_WARN_PH_HIGH);
+  ledOff(LED_OK);
+  ledOff(LED_WARN_PH_LOW);
+  ledOff(LED_ALARM_PH_LOW);
+  ledOff(LED_GH_OK);
+  ledOff(LED_GH_WARN);
+  ledOff(LED_GH_ALARM);
+  
+  pinMode(BT_PRESS, OUTPUT);
+  pinMode(BT_AUTO_LIGHT, OUTPUT);
+  pinMode(BT_LED_ONOFF, OUTPUT);
+
+}
+
+
+
+
+/////////////////////////////////////////////////////////
+// Allume une LED
+/////////////////////////////////////////////////////////
+void ledOn(int Led) {
+  if(buttonLedOnOff == 1) {
+    printDebugln("LED " + String(Led) + " allumée");
+    digitalWrite(Led, LED_ON);
+  } else {
+    printDebugln("LED " + String(Led) + " eteinte forcée");
+    digitalWrite(Led, LED_OFF);
+  }
+}
+
+
+
+
+
+/////////////////////////////////////////////////////////
+// Eteint une LED
+/////////////////////////////////////////////////////////
+void ledOff(int Led) {
+  printDebugln("LED " + String(Led) + " éteinte");
+  digitalWrite(Led, LED_OFF);
+}
+
+
+
+
+
+/////////////////////////////////////////////////////////
+// Récupère etat des boutons
+/////////////////////////////////////////////////////////
+void getButtonState() {
+  int buttonState = 0;
+  if(digitalRead(BT_AUTO_LIGHT) == HIGH) {
+    buttonAutoLight = 1;
+  } else {
+    buttonAutoLight = 0;
+  }
+
+  if(digitalRead(BT_LED_ONOFF) == HIGH) {
+    buttonLedOnOff = 1;
+  } else {
+    buttonLedOnOff = 0;
+  }
+  
+  if(digitalRead(BT_PRESS) == HIGH) {
+    if(Aqua_lightStatus == 0) {
+        Aqua_lightStatus = readValROM(EEPROM_POSITION_LAST_LIGHT_POWER);
+        writeValROM(EEPROM_POSITION_LIGHT_STATUS, Aqua_lightStatus);
+      } else {
+        Aqua_lightStatus = 0;
+        writeValROM(EEPROM_POSITION_LIGHT_STATUS, 0);
+      }
+  } 
+}
+
+
+
+
+/////////////////////////////////////////////////////////
+// Affiche sur les LED l'état de l'eau GH et pH
+/////////////////////////////////////////////////////////
+void displayWaterState() {
+
+  //Gestion des LED pH
+  if(Aqua_pHValue > PH_ALERT_HIGH_THRESHOLD) {
+    ledOn(LED_ALARM_PH_HIGH);
+    ledOff(LED_WARN_PH_HIGH);
+    ledOff(LED_OK);
+    ledOff(LED_WARN_PH_LOW);
+    ledOff(LED_ALARM_PH_LOW);
+  }
+
+  if(Aqua_pHValue > PH_WARN_HIGH_THRESHOLD) {
+    ledOff(LED_ALARM_PH_HIGH);
+    ledOn(LED_WARN_PH_HIGH);
+    ledOff(LED_OK);
+    ledOff(LED_WARN_PH_LOW);
+    ledOff(LED_ALARM_PH_LOW);
+  }
+
+  if(Aqua_pHValue > PH_WARN_LOW_THRESHOLD and Aqua_pHValue < PH_WARN_HIGH_THRESHOLD) {
+    ledOff(LED_ALARM_PH_HIGH);
+    ledOff(LED_WARN_PH_HIGH);
+    ledOn(LED_OK);
+    ledOff(LED_WARN_PH_LOW);
+    ledOff(LED_ALARM_PH_LOW);
+  }
+
+  if(Aqua_pHValue < PH_WARN_LOW_THRESHOLD) {
+    ledOff(LED_ALARM_PH_HIGH);
+    ledOff(LED_WARN_PH_HIGH);
+    ledOff(LED_OK);
+    ledOn(LED_WARN_PH_LOW);
+    ledOff(LED_ALARM_PH_LOW);
+  }
+
+  if(Aqua_pHValue < PH_ALERT_LOW_THRESHOLD) {
+    ledOff(LED_ALARM_PH_HIGH);
+    ledOff(LED_WARN_PH_HIGH);
+    ledOff(LED_OK);
+    ledOff(LED_WARN_PH_LOW);
+    ledOn(LED_ALARM_PH_LOW);
+  }
+
+  
+
+  
+  // Gestion des LED GH
+  
+  if(Aqua_tdsValue < GH_WARN_THRESHOLD) {
+    ledOff(LED_GH_ALARM);
+    ledOff(LED_GH_WARN);
+    ledOn(LED_GH_OK);
+  }
+  
+  if(Aqua_tdsValue > GH_WARN_THRESHOLD) {
+    ledOff(LED_GH_ALARM);
+    ledOn(LED_GH_WARN);
+    ledOff(LED_GH_OK);
+  }
+
+  if(Aqua_tdsValue > GH_ALERT_THRESHOLD) {
+    ledOn(LED_GH_ALARM);
+    ledOff(LED_GH_WARN);
+    ledOff(LED_GH_OK);
+  }
+  
+}
 
 
 
@@ -474,7 +684,7 @@ void getGH() {
       averageVoltage = getMedianNum(analogBufferTemp,TDS_COUNTER) * (float)TDS_VREF / 1024.0; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
       float compensationCoefficient=1.0+0.02*(Aqua_tempHaut-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
       float compensationVolatge=averageVoltage/compensationCoefficient;  //temperature compensation
-      Aqua_tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5 / 18; //convert voltage value to tds value
+      Aqua_tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5 / 17.8; //convert voltage value to tds value
       printDebug("voltage:",DEBUG);
       printDebug(String(averageVoltage),DEBUG);
       printDebug("V   ",DEBUG);
@@ -558,13 +768,14 @@ void getLightConsigne() {
 
   
   if(readValROM(posMemOff+2) == Hour and readValROM(posMemOff+3) == Minute) {
-    printDebugln("setOff",DEBUG);
+    printDebugln("Extinction programmée : " + String(DayOfWeekNumber) + " " + readValROM(posMemOff+2) + ":" + String(readValROM(posMemOff+3)),FORCE);
     Aqua_lightStatus = 0;
   }
 
   if(readValROM(posMemOn+2) == Hour and readValROM(posMemOn+3) == Minute) {
-    Aqua_lightStatus = 255;
+    Aqua_lightStatus = readValROM(EEPROM_POSITION_LAST_LIGHT_POWER);
     printDebugln("setOn",DEBUG);
+    printDebugln("Allumage programmé : " + String(DayOfWeekNumber) + " " + readValROM(posMemOn+2) + ":" + String(readValROM(posMemOn+3)),FORCE);
   }
 }
 // Fin getLightConsigne()
@@ -772,7 +983,19 @@ String readURL(String getAnswer) {
       Aqua_lightStatus = setStatus;
       jsonAnswer = "{\"lightStatus\":\"" + String(Aqua_lightStatus) + "\"}";
       printDebugln("setLightStatus" + String(Aqua_lightStatus),DEBUG);
-      writeValROM(EEPROM_POSITION_LIGHT_STATUS, Aqua_lightStatus);
+      
+      if(setStatus == 1) {
+        Aqua_lightStatus = readValROM(EEPROM_POSITION_LAST_LIGHT_POWER);
+        writeValROM(EEPROM_POSITION_LIGHT_STATUS, Aqua_lightStatus);
+      } else {
+        writeValROM(EEPROM_POSITION_LIGHT_STATUS, Aqua_lightStatus);
+        if(setStatus != 0) {
+          writeValROM(EEPROM_POSITION_LAST_LIGHT_POWER, Aqua_lightStatus);
+        }
+      }
+      
+      
+      
     
     } else if(cmd == "getLightStatus") {
       jsonAnswer = "{\"lightStatus\":\"" + String(Aqua_lightStatus) + "\"}";
