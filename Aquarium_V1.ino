@@ -171,7 +171,7 @@ String Aqua_dateTime="";
 
 // Variable du pH
 static float Aqua_pHValue;
-int pHBuffer[10];
+
 
 // Variable eclairage
 int Aqua_lightStatus = 0;
@@ -474,7 +474,7 @@ void getGH() {
       averageVoltage = getMedianNum(analogBufferTemp,TDS_COUNTER) * (float)TDS_VREF / 1024.0; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
       float compensationCoefficient=1.0+0.02*(Aqua_tempHaut-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
       float compensationVolatge=averageVoltage/compensationCoefficient;  //temperature compensation
-      Aqua_tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5; //convert voltage value to tds value
+      Aqua_tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5 / 18; //convert voltage value to tds value
       printDebug("voltage:",DEBUG);
       printDebug(String(averageVoltage),DEBUG);
       printDebug("V   ",DEBUG);
@@ -491,33 +491,22 @@ void getGH() {
 // Récupération du pH
 /////////////////////////////////////////////////////////
 void getPH(){
-
+  int pHBuffer[10];
   unsigned long int avgValue; 
   int temp;
+  int pHSum = 0;
+  
+  
   
   // calcul du pH
    for(int i=0;i<10;i++) 
    { 
-    pHBuffer[i]=analogRead(PH_PIN);
+    
+    pHSum+= map((1023 - analogRead(PH_PIN)), 0, 1023, 0, 1400) ;
     delay(10);
    }
-   for(int i=0;i<9;i++)
-   {
-    for(int j=i+1;j<10;j++)
-    {
-     if(pHBuffer[i]>pHBuffer[j])
-     {
-      temp=pHBuffer[i];
-      pHBuffer[i]=pHBuffer[j];
-      pHBuffer[j]=temp;
-     }
-    }
-   }
-   avgValue=0;
-   for(int i=2;i<8;i++)
-   avgValue+=pHBuffer[i];
-   float pHVol=(float)avgValue*5.0/1024/6;
-   Aqua_pHValue = -5.00 * pHVol + 21.09;
+   Aqua_pHValue = pHSum/1000;
+   pHSum = 0;
 }
 // Fin getPH()
 
@@ -844,7 +833,7 @@ String getLightTime (int getLightTime_day, int getLightTime_status) {
   printDebugln(String(readValROM(posMem+3), DEC),DEBUG);
   printDebugln(String(readValROM(posMem+4), DEC),DEBUG);
 
-  return "{response:OK}";  //ToDo renvoyer la reponse attendue
+  return "{\"response\":\"OK\"}";  //ToDo renvoyer la reponse attendue
 }
 // Fin getLightTime()
 
@@ -863,7 +852,7 @@ String setLightTime (int setLightTime_day, int setStatus, String setLightTime_ho
   writeValROM(posMem+4, setLightTime_hour.substring(6,8).toInt());
 
   
-  return "{response: complet: " + setLightTime_hour + " - H:" + setLightTime_hour.substring(0,2) + " - M:" + setLightTime_hour.substring(3,5) + "}";
+  return "{\"cmd\" : \"setLightTime\",\"day\": " + String(setLightTime_day) + ", \"hour\": " + setLightTime_hour + ", \"status\" : \"" + String(setStatus) + "\", \"return\" : \"OK\"}";
 }
 // Fin setLightTime()
 
