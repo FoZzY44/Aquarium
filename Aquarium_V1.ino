@@ -21,6 +21,12 @@
 // Initialisation de la SDCard
 #define INITSDCARD false
 
+// Initialisation de la Connexion serie
+#define INITSERIAL true
+
+// Counter d'erreur lecture heure
+#define COUNT_ERROR_TIMER 10
+
 // Pin du OneWire (Température)
 #define ONE_WIRE_PIN 2 
 
@@ -145,10 +151,13 @@
 /////////////////////////////////////////////////////////
 
 //Level du debug
-int debugLevel = 2;
+int debugLevel = 1;
 
 // carte SD disponible pour l'écriture
 bool cardOK = false;
+
+// Compteur d'erreur de timer
+int errorTimerCounter = 0;
 
 // Configuration de la couche réseau
 byte mac[] = {0x00, 0x3C, 0x05, 0xA7, 0x14, 0x45};
@@ -234,6 +243,9 @@ void getPH();
 void getTime();
 void listenClient();
 void getLightConsigne();
+String getLightTime (int getLightTime_day, int getLightTime_status, bool withDay);
+
+void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 /////////////////////////////////////////////////////////
 // Configuration du programme
@@ -242,7 +254,9 @@ void setup()
 { 
 
   // Ouverture du port COM
-  Serial.begin(115200); 
+  if(INITSERIAL) {
+    Serial.begin(115200); 
+  }
 
 
   // Initialisation des pins
@@ -290,7 +304,7 @@ void setup()
   // Démarrage de la couche réseau et récupération de l'IP pour affichage
   server.begin();
   printDebug("IP du serveur : ",DEBUG);
-  printDebugln(String(Ethernet.localIP()));
+  printDebugln(String(Ethernet.localIP()),INFO);
 
 
   // Initialiation de la carte SD
@@ -399,10 +413,10 @@ void initButtonsLed() {
 /////////////////////////////////////////////////////////
 void ledOn(int Led) {
   if(buttonLedOnOff == 1) {
-    printDebugln("LED " + String(Led) + " allumée");
+    printDebugln("LED " + String(Led) + " allumée",INFO);
     digitalWrite(Led, LED_ON);
   } else {
-    printDebugln("LED " + String(Led) + " eteinte forcée");
+    printDebugln("LED " + String(Led) + " eteinte forcée",INFO);
     digitalWrite(Led, LED_OFF);
   }
 }
@@ -415,7 +429,7 @@ void ledOn(int Led) {
 // Eteint une LED
 /////////////////////////////////////////////////////////
 void ledOff(int Led) {
-  printDebugln("LED " + String(Led) + " éteinte");
+  printDebugln("LED " + String(Led) + " éteinte",INFO);
   digitalWrite(Led, LED_OFF);
 }
 
@@ -583,7 +597,7 @@ void listenClient() {
         }
       }
       // give the web browser time to receive the data
-      delay(1);
+      delay(300);
       // close the connection:
       client.stop();
       printDebugln("Client deconnecté",DEBUG);
@@ -598,35 +612,35 @@ void listenClient() {
 /////////////////////////////////////////////////////////
 void getTime() {
     // Lecture de l'heure et action 
-    if (RTC.read(tm)) {
+  if (RTC.read(tm)) {
   
-      Aqua_dateTime =  print2digits(tm.Hour) + ":" + print2digits(tm.Minute) + ":" + print2digits(tm.Second) + " " + print2digits(tm.Day) + "/" + print2digits(tm.Month) + "/" + print2digits(tmYearToCalendar(tm.Year));
+    Aqua_dateTime =  print2digits(tm.Hour) + ":" + print2digits(tm.Minute) + ":" + print2digits(tm.Second) + " " + print2digits(tm.Day) + "/" + print2digits(tm.Month) + "/" + print2digits(tmYearToCalendar(tm.Year));
      
   
-      Hour = tm.Hour;
-      Minute = tm.Minute;
-      
-      
-      if(tm.Month >= 3) {
-        int z=tmYearToCalendar(tm.Year) - 1;
-        DayOfWeekNumber = (((23*tm.Month)/9) + tm.Day + 4 + tmYearToCalendar(tm.Year) + (z/4) - (z/100) + (z/400) - 2 ) % 7;
-      } else {
-        int z=tmYearToCalendar(tm.Year);
-        DayOfWeekNumber = (((23*tm.Month)/9) + tm.Day + 4 + tmYearToCalendar(tm.Year) + (z/4) - (z/100) + (z/400) ) % 7;
-      }
-      
+    Hour = tm.Hour;
+    Minute = tm.Minute;
+    
+    
+    if(tm.Month >= 3) {
+      int z=tmYearToCalendar(tm.Year) - 1;
+      DayOfWeekNumber = (((23*tm.Month)/9) + tm.Day + 4 + tmYearToCalendar(tm.Year) + (z/4) - (z/100) + (z/400) - 2 ) % 7;
     } else {
-      if (RTC.chipPresent()) {
-        printDebugln("The DS1307 is stopped.  Please run the SetTime",ERROR);
-        printDebugln("example to initialize the time and begin running.",ERROR);
-        printDebugln("",ERROR);
-      } else {
-        printDebugln("DS1307 read error!  Please check the circuitry.",ERROR);
-        printDebugln("",ERROR);
-      }
+      int z=tmYearToCalendar(tm.Year);
+      DayOfWeekNumber = (((23*tm.Month)/9) + tm.Day + 4 + tmYearToCalendar(tm.Year) + (z/4) - (z/100) + (z/400) ) % 7;
     }
-   }
+    
+    errorTimerCounter = 0; // Réinitialisation du compteur d'erreur
+    
+  } else {
+    printDebugln("DS1307 read error!  Reset Arduino.",ERROR);
+    errorTimerCounter++;
+    if(errorTimerCounter > COUNT_ERROR_TIMER) {
+      resetFunc();  //call reset
+    }
+  }
+}
 // Fin getTime()
+
 
 
 
@@ -635,23 +649,23 @@ void getTime() {
 /////////////////////////////////////////////////////////
 void getTemperature() {
     // Lecture des températures
-    printDebug(" Récupération des températures...",DEBUG); 
+    printDebug(" Récupération des températures...",INFO); 
     sensors.requestTemperatures(); // request command to get temperature readings 
-    printDebugln("OK"); 
+    printDebugln("OK",INFO); 
   
     Aqua_tempHaut = sensors.getTempCByIndex(1);
     Aqua_tempBas  = sensors.getTempCByIndex(2);
     Aqua_tempInt  = sensors.getTempCByIndex(0);
   
-    printDebug("Températures => ",DEBUG); 
-    printDebug("Haut : ",DEBUG); 
-    printDebug(String(Aqua_tempHaut),DEBUG);
-    printDebug("  "),DEBUG; 
-    printDebug("Bas : ",DEBUG); 
-    printDebug(String(Aqua_tempBas),DEBUG);
-    printDebug("  ",DEBUG); 
-    printDebug("Int : ",DEBUG); 
-    printDebugln(String(Aqua_tempInt),DEBUG);
+    printDebug("Températures => ",INFO); 
+    printDebug("Haut : ",INFO); 
+    printDebug(String(Aqua_tempHaut),INFO);
+    printDebug("  ",INFO); 
+    printDebug("Bas : ",INFO); 
+    printDebug(String(Aqua_tempBas),INFO);
+    printDebug("  ",INFO); 
+    printDebug("Int : ",INFO); 
+    printDebugln(String(Aqua_tempInt),INFO);
   }
 // Fin getTemperature()
 
@@ -685,12 +699,12 @@ void getGH() {
       float compensationCoefficient=1.0+0.02*(Aqua_tempHaut-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
       float compensationVolatge=averageVoltage/compensationCoefficient;  //temperature compensation
       Aqua_tdsValue=(133.42*compensationVolatge*compensationVolatge*compensationVolatge - 255.86*compensationVolatge*compensationVolatge + 857.39*compensationVolatge)*0.5 / 17.8; //convert voltage value to tds value
-      printDebug("voltage:",DEBUG);
-      printDebug(String(averageVoltage),DEBUG);
-      printDebug("V   ",DEBUG);
-      printDebug("TDS Value:",DEBUG);
-      printDebug(String(Aqua_tdsValue),DEBUG);
-      printDebugln("ppm",DEBUG);
+      printDebug("voltage:",INFO);
+      printDebug(String(averageVoltage),INFO);
+      printDebug("V   ",INFO);
+      printDebug("TDS Value:",INFO);
+      printDebug(String(Aqua_tdsValue),INFO);
+      printDebugln("ppm",INFO);
     }
   }
 // Fin getGH()
@@ -704,7 +718,7 @@ void getPH(){
   int pHBuffer[10];
   unsigned long int avgValue; 
   int temp;
-  int pHSum = 0;
+  float pHSum = 0;
   
   
   
@@ -741,7 +755,7 @@ void getDistance() {
  
   // Calcule la distance (en cm) par rapport à la vitesse du son.
   Aqua_Distance = duree / 58,2;
-  printDebug ("Distance : ",DEBUG);
+  printDebug ("Distance : ",INFO);
   if (Aqua_Distance>= DISTANCE_MAX || Aqua_Distance <= DISTANCE_MIN) 
   {
     printDebugln ( "hors de portee",WARN); 
@@ -749,7 +763,7 @@ void getDistance() {
   else
   { // Envoyer la distance à l'ordinateur via le moniteur série 
      
-    printDebugln (String(Aqua_Distance),DEBUG); 
+    printDebugln (String(Aqua_Distance),INFO); 
   } 
 }
 // Fin getDistance()
@@ -774,7 +788,7 @@ void getLightConsigne() {
 
   if(readValROM(posMemOn+2) == Hour and readValROM(posMemOn+3) == Minute) {
     Aqua_lightStatus = readValROM(EEPROM_POSITION_LAST_LIGHT_POWER);
-    printDebugln("setOn",DEBUG);
+    printDebugln("setOn",INFO);
     printDebugln("Allumage programmé : " + String(DayOfWeekNumber) + " " + readValROM(posMemOn+2) + ":" + String(readValROM(posMemOn+3)),FORCE);
   }
 }
@@ -891,7 +905,7 @@ String readURL(String getAnswer) {
   
   if(getAnswer.substring(0,2) == "/?") {
     urlParameters = getAnswer.substring(2,getAnswer.length()-1);
-    printDebugln(getAnswer);
+    printDebugln(getAnswer,INFO);
     for(int i=0; i<urlParameters.length();i++) {
       if(urlParameters.charAt(i) == '&') {
         countChunk++;
@@ -1005,7 +1019,11 @@ String readURL(String getAnswer) {
     
     } else if(cmd == "getLightTime") {
       printDebugln("Récupération de l'heure demandé : " + String(setLightTime_day) + " " + String(setStatus),DEBUG);
-      jsonAnswer = getLightTime(setLightTime_day,setStatus);
+      jsonAnswer = getLightTime(setLightTime_day,setStatus, true);
+    
+    } else if(cmd == "getLightCalendar") {
+      printDebugln("Récupération du calendrier complet",DEBUG);
+      jsonAnswer = getLightCalendar();
     
     } else if(cmd == "getInfo") {
       
@@ -1043,22 +1061,53 @@ String readURL(String getAnswer) {
 
 
 
+
+
 /////////////////////////////////////////////////////////////////////////
 // Affiche dans la console la consigne lumière
 /////////////////////////////////////////////////////////////////////////
-String getLightTime (int getLightTime_day, int getLightTime_status) {
-    
+String getLightTime (int getLightTime_day, int getLightTime_status, bool withDay = true) {
+ 
   int posMem = EEPROM_POSITION_LIGHT_TIME + (2*getLightTime_day + getLightTime_status)  * LIGHT_TIME_STRUCT_LENGTH;
-    
-  printDebugln(String(readValROM(posMem), DEC),DEBUG);
-  printDebugln(String(readValROM(posMem+1), DEC),DEBUG);
-  printDebugln(String(readValROM(posMem+2), DEC),DEBUG);
-  printDebugln(String(readValROM(posMem+3), DEC),DEBUG);
-  printDebugln(String(readValROM(posMem+4), DEC),DEBUG);
+  String returnString = "";
 
-  return "{\"response\":\"OK\"}";  //ToDo renvoyer la reponse attendue
+  if(withDay) {
+    returnString = "\"day\":\"" + String(getLightTime_day) + "\",\"status\":\"" + String(getLightTime_status) + "\",";
+  }
+   
+
+  returnString += "\"hour\":\"" + print2digits(readValROM(posMem+2)) + ":" + print2digits(readValROM(posMem+3)) + ":" + print2digits(readValROM(posMem+4)) + "\"";
+
+  if(withDay) {
+    returnString = "{" + returnString + "}";
+  }
+
+  printDebugln(returnString, DEBUG);
+
+  return returnString;  
 }
 // Fin getLightTime()
+
+
+/////////////////////////////////////////////////////////////////////////
+// Renvoie un JSON contenant le calendrier de la lumière
+/////////////////////////////////////////////////////////////////////////
+String getLightCalendar () {
+  String returnCalendar = "{";
+  
+  for(int i = 0; i<7; i++) {
+    returnCalendar += "\"" + String(i) + "\":{";
+    for(int j=0;j<2; j++) {
+      printDebugln("i:" + String(i) + " - j:" + String(j),DEBUG);
+      returnCalendar += "\"" +  String(j) + "\": {" + getLightTime(i,j,false) + "},";
+    }
+    returnCalendar = returnCalendar.substring(0,returnCalendar.length() -1) + "},";
+  }
+  returnCalendar = returnCalendar.substring(0,returnCalendar.length() -1) + "}";
+  return returnCalendar;
+}
+// Fin getLightCalendar()
+
 
 
 
@@ -1075,7 +1124,7 @@ String setLightTime (int setLightTime_day, int setStatus, String setLightTime_ho
   writeValROM(posMem+4, setLightTime_hour.substring(6,8).toInt());
 
   
-  return "{\"cmd\" : \"setLightTime\",\"day\": " + String(setLightTime_day) + ", \"hour\": " + setLightTime_hour + ", \"status\" : \"" + String(setStatus) + "\", \"return\" : \"OK\"}";
+  return "{\"cmd\" : \"setLightTime\",\"day\": \"" + String(setLightTime_day) + "\", \"hour\": " + setLightTime_hour + ", \"status\" : \"" + String(setStatus) + "\", \"return\" : \"OK\"}";
 }
 // Fin setLightTime()
 
@@ -1085,8 +1134,10 @@ String setLightTime (int setLightTime_day, int setStatus, String setLightTime_ho
 // Ecrit debug String sur la sortie Serial SANS retour à la ligne
 /////////////////////////////////////////////////////////////////////////
 void printDebug(String message, int level = 1) {
-  if(level >= debugLevel) {
-    Serial.print(message);
+  if(INITSERIAL) {
+    if(level >= debugLevel) {
+      Serial.print(message);
+    }
   }
 }
 
@@ -1097,11 +1148,12 @@ void printDebug(String message, int level = 1) {
 /////////////////////////////////////////////////////////////////////////
 void printDebugln(String message, int level = 1) {
   
-  
-  if(level >= debugLevel) {
-    Serial.println(message);
-    
+  if(INITSERIAL) {
+    if(level >= debugLevel) {
+      Serial.println(message); 
+    }
   }
+  
 }
 // Fin printDebugln()
 
@@ -1345,11 +1397,11 @@ int getMedianNum(int bArray[], int iFilterLen) {
 // Effacer l'EEPROM
 ///////////////////////////////////////////////////////
 String clearROM(int startAddress, int stopAddress) {
-  printDebug("Cleaning de l'EEPROM ", DEBUG);
+  printDebug("Cleaning de l'EEPROM ", INFO);
   for (int i = 0 ; i < EEPROM.length() ; i++) {
     EEPROM.write(i, 0);
   }
-  printDebugln("...OK", DEBUG);
+  printDebugln("...OK", INFO);
   return "{response:OK}";
 }
 // Fin clearROM()
@@ -1361,7 +1413,7 @@ String clearROM(int startAddress, int stopAddress) {
 ///////////////////////////////////////////////////////
 void writeValROM(int address, int value ) {
   EEPROM.write(address, value);
-  printDebugln("Ecriture de la valeur " + String(value) + " à l'adresse ", DEBUG);
+  printDebugln("Ecriture de la valeur " + String(value) + " à l'adresse ", INFO);
 }
 // Fin writeValROM()
 
@@ -1373,7 +1425,7 @@ void writeValROM(int address, int value ) {
 int readValROM(int address) {
   int value;
   value = EEPROM.read(address);
-  printDebugln("Lecture de la valeur à l'adresse 0x" + String(address) + " : " + String(value), DEBUG);
+  printDebugln("Lecture de la valeur à l'adresse 0x" + String(address) + " : " + String(value), INFO);
   return value;
 }
 // Fin readValROM()
